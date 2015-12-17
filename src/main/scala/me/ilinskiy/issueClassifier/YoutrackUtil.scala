@@ -4,8 +4,8 @@ package me.ilinskiy.issueClassifier
 import org.apache.spark.rdd.RDD
 
 import scala.collection.immutable
-import scala.io.{BufferedSource, Source}
-import scala.xml.{NodeSeq, Elem, Node}
+import scala.io.Source
+import scala.xml.{Elem, Node, NodeSeq}
 
 
 /**
@@ -75,9 +75,9 @@ object YoutrackUtil {
     nodeToIssue(elem)
   }
 
-  def measure(twoGram: Boolean, threeGram: Boolean, model: TrainingResult, issues: Seq[Issue]): (Int, Int, Double) = {
+  def measure(model: TrainingResult, issues: Seq[Issue]): (Int, Int, Double) = {
     val results = issues.map { i =>
-      (i.subsystem.id, YoutrackClassifier.predict(twoGram, threeGram, i, model))
+      (i.subsystem.id, YoutrackClassifier.predict(i, model))
     }.filterNot(_._1 == "No Subsystem")
 
     val correct = results.count(t => t._1 == t._2)
@@ -87,14 +87,16 @@ object YoutrackUtil {
     (correct, wrong, accuracy)
   }
 
-  def tokenize(texts: Seq[String], useTwoGrams: Boolean, useThreeGrams: Boolean): Seq[String] = {
+  def tokenize(texts: Seq[String], nGrams: Int): Seq[String] = {
     val myStemmer = new PorterStemmer
     //remove all non-alphabetic and non-numeric characters and stem words
-    (for (s <- texts) yield {
-      val words = s.split("[ \n]").map(_.replaceAll("[^\\p{L}\\p{Nd}]+", "")).filter(_.length > 0).map(_.toLowerCase).map(myStemmer.stripAffixes)
-      words ++
-        (if (useTwoGrams && words.length > 1) words.zip(words.tail).map{case (a, b) => a + " " + b} else List()) ++
-        (if (useThreeGrams && words.length > 2) (words, words.tail, words.tail.tail).zipped.map{case (a, b, c) => a + " " + b + " " + c} else List())
-    }).flatten
+    texts.flatMap { s =>
+      val words = s.split("[ \n]").map(_.replaceAll("[^\\p{L}\\p{Nd}]+", "").toLowerCase).filter(_.nonEmpty).map(myStemmer.stripAffixes)
+      words ++ (1 to nGrams).flatMap(n => createNGrams(words, n))
+    }
+  }
+
+  def createNGrams(strings: Seq[String], n: Int): Seq[String] = if (strings.length < n) Seq.empty else {
+    strings.sliding(n).map(_.mkString(" ")).toList
   }
 }

@@ -14,16 +14,16 @@ import scala.collection.Map
   */
 object YoutrackClassifier {
   val project = "SCL"
+  val nGrams = 2
 
   def main(args: Array[String]) {
     val conf = new SparkConf().setAppName("Youtrack Issue Classifier")
     val sc = new SparkContext(conf)
     val issues = YoutrackStats.getIssues(sc, project)
-    println(measure(false, false, issues) + "\n" + measure(true, false, issues))
+    println(measure(issues))
   }
 
-  def measure(twoGram: Boolean, threeGram: Boolean, issues: RDD[Issue]): String = {
-    println()
+  def measure(issues: RDD[Issue]): String = {
     val cvCount = 10
     val issuesWithSubsystems = issues.filter(_.subsystem.name != "No Subsystem")
     val randomSplit = issuesWithSubsystems.randomSplit((for (i <- 0 to cvCount) yield 1).map(_.toDouble).toArray)
@@ -31,24 +31,23 @@ object YoutrackClassifier {
       val (trainingSet, testingSet) = (randomSplit(testId), (randomSplit.take(testId) ++ randomSplit.drop(testId + 1)).reduce((left, right) => left ++ right))
       trainingSet.cache()
       testingSet.cache()
-      val model = train(twoGram, threeGram, trainingSet)
-      YoutrackUtil.measure(twoGram, threeGram, model, testingSet.collect())
+      val model = train(trainingSet)
+      YoutrackUtil.measure(model, testingSet.collect())
     }
     val str = for ((correct, wrong, accuracy) <- res)
       yield s"Correct: $correct\nWrong: $wrong\nAccuracy: $accuracy"
     val acc = res.map(_._3)
-    s"Using two-grams: $twoGram using three-grams: $threeGram\n $str \nMIN accuracy: ${acc.foldLeft(acc.head)(math.min)}" +
+    s"$str \nMIN accuracy: ${acc.foldLeft(acc.head)(math.min)}" +
     s"\nMAX accuracy: ${acc.foldLeft(acc.head)(math.max)} \nAVERAGE accuracy: ${acc.sum / acc.length}"
   }
 
   //todo: give more weight to summary than to description
   //todo: include comments during training
   //todo: include attachments
-  //todo: stem words
-  def train(twoGram: Boolean, threeGram: Boolean, _issues: RDD[Issue]): TrainingResult = {
+  def train(_issues: RDD[Issue]): TrainingResult = {
     val issues = _issues.filter(_.subsystem.id != "No Subsystem")
     val issuesAndTheirWords: RDD[(Issue, Seq[String])] = issues.map { i =>
-      (i, YoutrackUtil.tokenize(List(i.description, i.summary), twoGram, threeGram))
+      (i, YoutrackUtil.tokenize(List(i.description, i.summary), nGrams))
     }
 
     val docsWithWords: Map[String, Int] = {
@@ -86,8 +85,8 @@ object YoutrackClassifier {
     TrainingResult(model, docsWithWords, numDocs, wordIds, subsystemIds.map(_.swap))
   }
 
-  def predict(twoGram: Boolean, threeGram: Boolean, issue: Issue, trainingResult: TrainingResult): String = {
-    val words: Seq[String] = YoutrackUtil.tokenize(List(issue.description, issue.summary), twoGram, threeGram)
+  def predict(issue: Issue, trainingResult: TrainingResult): String = {
+    val words: Seq[String] = YoutrackUtil.tokenize(List(issue.description, issue.summary), nGrams)
     val ids: Map[String, Int] = trainingResult.wordIds
     val data: Seq[(Int, Double)] = words.filter(ids.contains).map { word =>
       val numDocsWithThisWord = trainingResult.docsWithWords(word).toDouble

@@ -1,7 +1,6 @@
 package me.ilinskiy.issueClassifier
 
 
-import me.ilinskiy.issueClassifier.{TrainingResult, YoutrackClassifier}
 import org.apache.spark.rdd.RDD
 
 import scala.collection.immutable
@@ -76,19 +75,26 @@ object YoutrackUtil {
     nodeToIssue(elem)
   }
 
-  def measure(model: TrainingResult, issues: Seq[Issue]): Unit = {
+  def measure(twoGram: Boolean, threeGram: Boolean, model: TrainingResult, issues: Seq[Issue]): (Int, Int, Double) = {
     val results = issues.map { i =>
-      (i.subsystem.id, YoutrackClassifier.predict(i, model))
+      (i.subsystem.id, YoutrackClassifier.predict(twoGram, threeGram, i, model))
     }.filterNot(_._1 == "No Subsystem")
 
     val correct = results.count(t => t._1 == t._2)
     val wrong = results.count(t => t._1 != t._2)
     val accuracy = correct.toDouble / (wrong.toDouble + correct)
     println(s"Correct: $correct\nWrong: $wrong\nTotal: ${results.size}\nAccuracy: $accuracy")
+    (correct, wrong, accuracy)
   }
 
-  def tokenize(s: String): Seq[String] = {
-    //remove all non-alphabetic and non-numeric characters
-    s.split("[ \n]").map(_.replaceAll("[^\\p{L}\\p{Nd}]+", "")).map(_.toLowerCase)
+  def tokenize(texts: Seq[String], useTwoGrams: Boolean, useThreeGrams: Boolean): Seq[String] = {
+    val myStemmer = new PorterStemmer
+    //remove all non-alphabetic and non-numeric characters and stem words
+    (for (s <- texts) yield {
+      val words = s.split("[ \n]").map(_.replaceAll("[^\\p{L}\\p{Nd}]+", "")).filter(_.length > 0).map(_.toLowerCase).map(myStemmer.stripAffixes)
+      words ++
+        (if (useTwoGrams && words.length > 1) words.zip(words.tail).map{case (a, b) => a + " " + b} else List()) ++
+        (if (useThreeGrams && words.length > 2) (words, words.tail, words.tail.tail).zipped.map{case (a, b, c) => a + " " + b + " " + c} else List())
+    }).flatten
   }
 }

@@ -1,6 +1,6 @@
 package me.ilinskiy.issueClassifier
 
-import org.apache.spark.mllib.classification.{NaiveBayes, NaiveBayesModel}
+import org.apache.spark.mllib.classification._
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
@@ -19,20 +19,36 @@ object YoutrackClassifier {
     val conf = new SparkConf().setAppName("Youtrack Issue Classifier")
     val sc = new SparkContext(conf)
     val issues = YoutrackStats.getIssues(sc, project)
-    val randomSplit = issues.randomSplit(Array(0.8, 0.2))
-    val (trainingSet, testingSet) = (randomSplit.head, randomSplit(1))
-    val model = train(trainingSet)
-    YoutrackUtil.measure(model, testingSet.collect())
+    println(measure(false, false, issues) + "\n" + measure(true, false, issues))
+  }
+
+  def measure(twoGram: Boolean, threeGram: Boolean, issues: RDD[Issue]): String = {
+    println()
+    val cvCount = 10
+    val issuesWithSubsystems = issues.filter(_.subsystem.name != "No Subsystem")
+    val randomSplit = issuesWithSubsystems.randomSplit((for (i <- 0 to cvCount) yield 1).map(_.toDouble).toArray)
+    val res = for (testId <- 0 to cvCount) yield {
+      val (trainingSet, testingSet) = (randomSplit(testId), (randomSplit.take(testId) ++ randomSplit.drop(testId + 1)).reduce((left, right) => left ++ right))
+      trainingSet.cache()
+      testingSet.cache()
+      val model = train(twoGram, threeGram, trainingSet)
+      YoutrackUtil.measure(twoGram, threeGram, model, testingSet.collect())
+    }
+    val str = for ((correct, wrong, accuracy) <- res)
+      yield s"Correct: $correct\nWrong: $wrong\nAccuracy: $accuracy"
+    val acc = res.map(_._3)
+    s"Using two-grams: $twoGram using three-grams: $threeGram\n $str \nMIN accuracy: ${acc.foldLeft(acc.head)(math.min)}" +
+    s"\nMAX accuracy: ${acc.foldLeft(acc.head)(math.max)} \nAVERAGE accuracy: ${acc.sum / acc.length}"
   }
 
   //todo: give more weight to summary than to description
   //todo: include comments during training
   //todo: include attachments
   //todo: stem words
-  def train(_issues: RDD[Issue]): TrainingResult = {
+  def train(twoGram: Boolean, threeGram: Boolean, _issues: RDD[Issue]): TrainingResult = {
     val issues = _issues.filter(_.subsystem.id != "No Subsystem")
     val issuesAndTheirWords: RDD[(Issue, Seq[String])] = issues.map { i =>
-      (i, YoutrackUtil.tokenize(i.description + " " + i.summary))
+      (i, YoutrackUtil.tokenize(List(i.description, i.summary), twoGram, threeGram))
     }
 
     val docsWithWords: Map[String, Int] = {
@@ -47,8 +63,7 @@ object YoutrackClassifier {
 
     val wordIds: Map[String, Int] = docsWithWords.keys.zipWithIndex.toMap
     //have to do it that way because after mapValues Map is not serializable
-    val subsystemIds: Map[String, Double] = issues.map(_.subsystem.name).collect().
-      zipWithIndex.toMap.mapValues(_.toDouble).map(identity)
+    val subsystemIds: Map[String, Int] = issues.map(_.subsystem.name).collect().toSet.zipWithIndex.toMap
     val numDocs = issues.count().toDouble
     val input: RDD[LabeledPoint] = issuesAndTheirWords.map {
       case (i, words) =>
@@ -63,15 +78,16 @@ object YoutrackClassifier {
           case (id, b) => (id, b.map(_._2).sum)
         }
         val vector = Vectors.sparse(wordIds.size, s)
-        LabeledPoint(subsystemIds(i.subsystem.name), vector)
+        new LabeledPoint(subsystemIds(i.subsystem.name), vector)
     }
 
     val model = NaiveBayes.train(input)
+//    val model = new LogisticRegressionWithLBFGS().setNumClasses(subsystemIds.size).run(input)
     TrainingResult(model, docsWithWords, numDocs, wordIds, subsystemIds.map(_.swap))
   }
 
-  def predict(issue: Issue, trainingResult: TrainingResult): String = {
-    val words: Seq[String] = YoutrackUtil.tokenize(issue.description + " " + issue.summary)
+  def predict(twoGram: Boolean, threeGram: Boolean, issue: Issue, trainingResult: TrainingResult): String = {
+    val words: Seq[String] = YoutrackUtil.tokenize(List(issue.description, issue.summary), twoGram, threeGram)
     val ids: Map[String, Int] = trainingResult.wordIds
     val data: Seq[(Int, Double)] = words.filter(ids.contains).map { word =>
       val numDocsWithThisWord = trainingResult.docsWithWords(word).toDouble
@@ -82,12 +98,12 @@ object YoutrackClassifier {
       case ((id, value), values) => (id, values.size.toDouble)
     }.toSeq
     val vector = Vectors.sparse(ids.size, data)
-    val predicted = trainingResult.model.predict(vector)
+    val predicted = trainingResult.model.predict(vector).toInt
     val resString = trainingResult.idToSubsystemName(predicted)
-    println(s"${issue.fullIssueId}: $resString")
+    //println(s"${issue.fullIssueId}: $resString")
     resString
   }
 }
 
-case class TrainingResult(model: NaiveBayesModel, docsWithWords: Map[String, Int], numDocs: Double,
-                          wordIds: Map[String, Int], idToSubsystemName: Map[Double, String])
+case class TrainingResult(model: ClassificationModel, docsWithWords: Map[String, Int], numDocs: Double,
+                          wordIds: Map[String, Int], idToSubsystemName: Map[Int, String])

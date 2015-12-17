@@ -4,3 +4,5 @@ lib_managed/
 src_managed/
 project/boot/
 .cache
+issues/
+metastore_db/

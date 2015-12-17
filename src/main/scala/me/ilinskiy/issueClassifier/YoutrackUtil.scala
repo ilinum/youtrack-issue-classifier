@@ -87,16 +87,24 @@ object YoutrackUtil {
     (correct, wrong, accuracy)
   }
 
-  def tokenize(texts: Seq[String], nGrams: Int): Seq[String] = {
+  def tokenize(i: Issue): Seq[String] = tokenize((i.description, 1, true, YoutrackClassifier.nGrams),
+    (i.summary, 2, true, YoutrackClassifier.nGrams),
+    (i.reporterName.shortName.replace(" ", "_"), 5, false, 1))
+
+  def tokenize(texts: (String, Int, Boolean, Int)*): Seq[String] = {
     val myStemmer = new PorterStemmer
     //remove all non-alphabetic and non-numeric characters and stem words
-    texts.flatMap { s =>
-      val words = s.split("[ \n]").map(_.replaceAll("[^\\p{L}\\p{Nd}]+", "").toLowerCase).filter(_.nonEmpty).map(myStemmer.stripAffixes)
-      words ++ (1 to nGrams).flatMap(n => createNGrams(words, n))
-    }
+    (for ((s, mul, stem, nGrams) <- texts) yield {
+      val words = multiplyWords(
+        s.split("[ \n]").map(_.replaceAll("[^\\p{L}\\p{Nd}]+", "")).filter(_.length > 0).map(_.toLowerCase).
+          map(if (stem) myStemmer.stripAffixes else identity), mul)
+      (1 to nGrams).flatMap(n => createNGrams(words, n))    }).flatten
   }
 
-  def createNGrams(strings: Seq[String], n: Int): Seq[String] = if (strings.length < n) Seq.empty else {
-    strings.sliding(n).map(_.mkString(" ")).toList
-  }
+  def multiplyWords(words: Seq[String], mul: Int) = if (mul <= 1) words else words.flatMap(List.fill(mul)(_))
+
+  def createNGrams(strings: Seq[String], n: Int): Seq[String] =
+    if (n == 1) strings
+    else if (strings.length < n) Seq.empty
+    else strings.sliding(n).map(_.mkString(" ")).toList
 }

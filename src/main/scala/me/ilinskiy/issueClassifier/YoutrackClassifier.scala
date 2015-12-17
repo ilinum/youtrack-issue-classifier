@@ -47,7 +47,7 @@ object YoutrackClassifier {
   def train(_issues: RDD[Issue]): TrainingResult = {
     val issues = _issues.filter(_.subsystem.id != "No Subsystem")
     val issuesAndTheirWords: RDD[(Issue, Seq[String])] = issues.map { i =>
-      (i, YoutrackUtil.tokenize(List(i.description, i.summary), nGrams))
+      (i, YoutrackUtil.tokenize(i))
     }
 
     val docsWithWords: Map[String, Int] = {
@@ -86,7 +86,7 @@ object YoutrackClassifier {
   }
 
   def predict(issue: Issue, trainingResult: TrainingResult): String = {
-    val words: Seq[String] = YoutrackUtil.tokenize(List(issue.description, issue.summary), nGrams)
+    val words: Seq[String] = YoutrackUtil.tokenize(issue)
     val ids: Map[String, Int] = trainingResult.wordIds
     val data: Seq[(Int, Double)] = words.filter(ids.contains).map { word =>
       val numDocsWithThisWord = trainingResult.docsWithWords(word).toDouble

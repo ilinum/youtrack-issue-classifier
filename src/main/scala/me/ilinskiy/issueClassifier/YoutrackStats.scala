@@ -1,13 +1,12 @@
 package me.ilinskiy.issueClassifier
 
-import java.io.{PrintStream, File, FileWriter}
+import java.io.{File, FileWriter}
 
+import org.apache.spark.SparkContext
 import org.apache.spark.rdd.RDD
-import org.apache.spark.{SparkConf, SparkContext}
 
-import scala.collection.mutable
 import scala.io.{BufferedSource, Source}
-import scala.xml.{NodeSeq, Elem, Node, XML}
+import scala.xml.{NodeSeq, XML}
 
 /**
   * Author: Svyatoslav Ilinskiy
@@ -67,6 +66,8 @@ case class Issue(project: String, issueId: Int, summary: String, description: St
                  updaterName: Name, reporterName: Name, votesCount: Int, subsystem: NameIdPair, issueType: NameIdPair,
                  priority: NameIdPair, state: NameIdPair, assignees: Seq[Name], comments: Seq[Comment]) {
   def fullIssueId: String = s"$project-$issueId"
+
+  override def toString: String = fullIssueId
 }
 
 case class Name(shortName: String, fullName: String)

@@ -1,6 +1,8 @@
 package me.ilinskiy.issueClassifier
 
 
+import java.util.regex.Pattern
+
 import org.apache.spark.rdd.RDD
 
 import scala.collection.immutable
@@ -98,7 +100,20 @@ object YoutrackUtil {
       val words = multiplyWords(
         s.split("[ \n]").map(_.replaceAll("[^\\p{L}\\p{Nd}]+", "")).filter(_.length > 0).map(_.toLowerCase).
           map(if (stem) myStemmer.stripAffixes else identity), mul)
-      (1 to nGrams).flatMap(n => createNGrams(words, n))    }).flatten
+      val stackTraceMethods = s.split("[\n]").collect {
+        case stack if stack.matches("\\s*at *.*.*\\(*\\)") && (stack.contains("intellij") || stack.contains("jetbrains")) =>
+          val matcher = Pattern.compile(".*\\(").matcher(stack)
+          matcher.find()
+          matcher.group().replace("(", "").replace(" at ", "")
+      }.toSeq.zipWithIndex.take(5).flatMap {
+        case (value, i) => multiplyWords(Seq(value), 5)
+      }
+      val nGrammed = (1 to nGrams).flatMap(n => createNGrams(words, n))
+      val hasStackTrace =
+        if (stackTraceMethods.nonEmpty) List("issue.classifier.internal.has.stack.trace")
+        else Nil
+      nGrammed ++ stackTraceMethods ++ multiplyWords(hasStackTrace, 5)
+    }).flatten
   }
 
   def multiplyWords(words: Seq[String], mul: Int) = if (mul <= 1) words else words.flatMap(List.fill(mul)(_))
